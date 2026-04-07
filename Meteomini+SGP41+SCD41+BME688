@@ -1,16 +1,16 @@
 /*
-  Meteomini - Senzorická stanice pro ESP32 s čidly SGP41, SCD41 a SHT40
+  Meteomini - Senzorická stanice pro ESP32 s čidly SGP41, SCD41 a BME688
   ---------------------------------------------------------
-  Autor: kabelkao
+  Autor: kabelkao, upraveno ondrejchmelar
 
   LOGIKA PROGRAMU:
   ----------------
   1. Při startu ESP32 povolí napájení senzorů.
-  2. Inicializuje I2C sběrnici a připojená čidla (SHT40 - teplota/vlhkost, SCD41 - CO2, SGP41 - VOC).
+  2. Inicializuje I2C sběrnici a připojená čidla (BME688 - teplota/vlhkost/kvalita, SCD41 - CO2, SGP41 - VOC/NOX).
   3. Provede test funkčnosti všech čidel (v případě chyby se vypne napájení a ESP32 se uspí).
   4. Načte uložený stav VOC algoritmu z NVS paměti.
-  5. Změří teplotu a vlhkost přes SHT40.
-  6. Provede 60 měření VOC pomocí SGP41 s kompenzací prostředí (dle SHT40), VOC index počítá algoritmus.
+  5. Změří teplotu, vlhkost a kvalitu přes BME688.
+  6. Provede 60 měření VOC pomocí SGP41 s kompenzací prostředí (dle BME688), VOC index počítá algoritmus.
   7. Po ukončení měření uloží stav VOC algoritmu zpět do NVS paměti.
   8. Získá platné měření CO2, teploty a vlhkosti ze SCD41 (max. 30s čekání).
   9. Vypne napájení senzorů.
@@ -22,21 +22,21 @@
 
   HARDWARE:
     - ESP32
-    - SHT40 (teplota, vlhkost)
-    - SGP41 (VOC)
-    - SCD41 (CO2, teplota, vlhkost)
+    - BME688 (teplota, vlhkost, kvalita vzduchu)
+    - SGP41 (VOC, NOX)
+    - SCD41 (CO2)
     - Napájení z baterie (měření přes dělič napětí)
     - Vývod pro povolení napájení (POWER_ENABLE_PIN)
     - I2C sběrnice na pinech 18 (SCL) a 19 (SDA)
     - Analogový vstup pro měření baterie na pinu 0
 
   SOFTWARE:
-    - Používá knihovny: Adafruit_SHT4x, SparkFun_SCD4x_Arduino_Library, SensirionI2CSgp41, VOCGasIndexAlgorithm, WiFiManager, HTTPClient, esp_wifi, esp_sleep, Preferences
+    - Používá knihovny: Adafruit_BME680, SparkFun_SCD4x_Arduino_Library, SensirionI2CSgp41, VOCGasIndexAlgorithm, WiFiManager, HTTPClient, esp_wifi, esp_sleep, Preferences
     - Vše probíhá v setup(), loop() je prázdný (běh jednou a pak uspání)
 */
 
 #include <Wire.h>                       // I2C komunikace
-#include <Adafruit_SHT4x.h>             // SHT40/SHT41 knihovna
+#include <Adafruit_BME680.h>            // BME680/BME688 knihovna
 #include "SparkFun_SCD4x_Arduino_Library.h" // SCD41 knihovna
 #include "SensirionI2CSgp41.h"          // SGP41 knihovna
 #include "VOCGasIndexAlgorithm.h"       // Algoritmus pro VOC index
@@ -55,9 +55,9 @@
 #define bDeviderRatio 1.82274           // Poměr děliče napětí pro měření baterie
 
 // --- Globální objekty ---
-Adafruit_SHT4x sht40;                   // SHT40 (teplota, vlhkost)
-SCD4x scd41;                            // SCD41 (CO2, teplota, vlhkost)
-SensirionI2CSgp41 sgp41;                // SGP41 (VOC)
+Adafruit_BME688 bme688;                 // BME688 (teplota, vlhkost, kvalita)
+SCD4x scd41;                            // SCD41 (CO2)
+SensirionI2CSgp41 sgp41;                // SGP41 (VOC, NOX)
 VOCGasIndexAlgorithm voc_algorithm;     // Algoritmus pro VOC index
 Preferences preferences;                // Objekt pro práci s NVS pamětí
 
@@ -110,14 +110,14 @@ void setup() {
   // --- Inicializace I2C sběrnice ---
   Wire.begin(SDA_PIN, SCL_PIN);
 
-  // --- Inicializace SHT40 (teplota, vlhkost) ---
-  if (!sht40.begin()) {
-    Serial.println("SHT40 nenalezen!");
+  // --- Inicializace BME688 (teplota, vlhkost, kvalita) ---
+  if (!bme688.begin()) {
+    Serial.println("BME688 nenalezen!");
     digitalWrite(POWER_ENABLE_PIN, LOW);
     go_to_sleep();
   }
 
-  // --- Inicializace SCD41 (CO2, teplota, vlhkost) ---
+  // --- Inicializace SCD41 (CO2) ---
   if (!scd41.begin(false, true)) {
     Serial.println("SCD41 nenalezen!");
     digitalWrite(POWER_ENABLE_PIN, LOW);
@@ -140,24 +140,24 @@ void setup() {
   // --- Načtení stavu VOC algoritmu z NVS paměti ---
   load_voc_state(voc_algorithm);
 
-  // --- Měření teploty a vlhkosti SHT40 ---
+  // --- Měření teploty a vlhkosti BME688 ---
   sensors_event_t humidity, temp;
-  float sht_temp = NAN, sht_rh = NAN;
-  if (sht40.getEvent(&humidity, &temp)) {
-    sht_temp = temp.temperature;
-    sht_rh = humidity.relative_humidity;
+  float bme_temp = NAN, bme_rh = NAN;
+  if (bme688.getEvent(&humidity, &temp)) {
+    bme_temp = temp.temperature;
+    bme_rh = humidity.relative_humidity;
   } else {
-    sht_temp = 25.0;
-    sht_rh = 50.0;
-    Serial.println("SHT40 chyba čtení! Používám default hodnoty.");
+    bme_temp = 25.0;
+    bme_rh = 50.0;
+    Serial.println("BME688 chyba čtení! Používám default hodnoty.");
   }
 
-  // --- SGP41: 60× měření (1 min, 1 Hz) s kompenzací SHT40 ---
+  // --- SGP41: 60× měření (1 min, 1 Hz) s kompenzací BME688 ---
   float voc_index = 0;
   for (int i = 0; i < 60; i++) {
     // Přepočet hodnot pro kompenzaci (viz datasheet SGP41)
-    uint16_t compRH = (uint16_t)((sht_rh * 65535.0f) / 100.0f);
-    uint16_t compT = (uint16_t)(((sht_temp + 45.0f) * 65535.0f) / 175.0f);
+    uint16_t compRH = (uint16_t)((bme_rh * 65535.0f) / 100.0f);
+    uint16_t compT = (uint16_t)(((bme_temp + 45.0f) * 65535.0f) / 175.0f);
 
     uint16_t srawVoc = 0, srawNox = 0;
     uint16_t sgp41_error = sgp41.measureRawSignals(compRH, compT, srawVoc, srawNox);
@@ -205,7 +205,7 @@ void setup() {
 
   // --- Výpis naměřených hodnot na sériovou linku ---
   Serial.println("Naměřené hodnoty:");
-  Serial.print("SHT40: T="); Serial.print(sht_temp, 2); Serial.print("°C, RH="); Serial.print(sht_rh, 2); Serial.println("%");
+  Serial.print("BME688: T="); Serial.print(bme_temp, 2); Serial.print("°C, RH="); Serial.print(bme_rh, 2); Serial.println("%");
   Serial.print("SGP41: VOC="); Serial.println(voc_index, 1);
   Serial.print("SCD41: CO2="); Serial.print(scd_co2, 1); Serial.print("ppm, T="); Serial.print(scd_temp, 2); Serial.print("°C, RH="); Serial.print(scd_rh, 2); Serial.println("%");
 
@@ -213,8 +213,8 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
     String serverPath = serverName +
-      "temp=" + String(sht_temp, 2) +
-      "&hum=" + String(sht_rh, 2) +
+      "temp=" + String(bme_temp, 2) +
+      "&hum=" + String(bme_rh, 2) +
       "&co2=" + String(scd_co2, 1) +
       "&voc=" + String(voc_index, 1) +
       "&scdtemp=" + String(scd_temp, 2) +
