@@ -51,7 +51,7 @@
 #define FORCE_CALIBRATE false
 #define FORCE_CALIBRATE_REFERENCE_PPM 420  // Current outdoor CO2 level (~420 ppm)
 
-#define VOC_MEASUREMENT_COUNT 20           // Number of SGP41 measurements (1 Hz); 60 = 1 min recommended
+#define VOC_MEASUREMENT_COUNT 60           // Number of SGP41 measurements (1 Hz); min ~45 to exit conditioning phase
 
 // --- Pin and constant definitions ---
 #define POWER_ENABLE_PIN 4              // Output for enabling sensor power
@@ -186,13 +186,13 @@ void setup() {
     uint16_t sraw_voc = 0, sraw_nox = 0;
     uint16_t sgp41_error = sgp41.measureRawSignals(comp_rh, comp_t, sraw_voc, sraw_nox);
 
-    if (!sgp41_error) {
+    if (!sgp41_error && sraw_voc > 0) {
       voc_index = voc_algorithm.process(sraw_voc); // Compute VOC index
     } else {
       Serial.print("SGP41 error: ");
       Serial.println(sgp41_error);
     }
-    Serial.print("SGP41 ["); Serial.print(i+1); Serial.print("/"); Serial.print(VOC_MEASUREMENT_COUNT); Serial.print("]: VOC="); Serial.println(voc_index, 1);
+    Serial.print("SGP41 ["); Serial.print(i+1); Serial.print("/"); Serial.print(VOC_MEASUREMENT_COUNT); Serial.print("]: sraw_voc="); Serial.print(sraw_voc); Serial.print(" VOC="); Serial.println(voc_index, 1);
 
     delay(1000); // 1 Hz measurement
   }
