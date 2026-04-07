@@ -177,12 +177,12 @@ void setup() {
   scd41.measureSingleShot();
 
   // --- SGP41: VOC_MEASUREMENT_COUNT measurements (1 min, 1 Hz) with BME688 compensation ---
+  // Convert BME688 values to SGP41 compensation format (see SGP41 datasheet)
+  uint16_t comp_rh = (uint16_t)((bme_rh * 65535.0f) / 100.0f);
+  uint16_t comp_t = (uint16_t)(((bme_temp + 45.0f) * 65535.0f) / 175.0f);
+
   float voc_index = 0;
   for (int i = 0; i < VOC_MEASUREMENT_COUNT; i++) {
-    // Convert values for compensation (see SGP41 datasheet)
-    uint16_t comp_rh = (uint16_t)((bme_rh * 65535.0f) / 100.0f);
-    uint16_t comp_t = (uint16_t)(((bme_temp + 45.0f) * 65535.0f) / 175.0f);
-
     uint16_t sraw_voc = 0, sraw_nox = 0;
     uint16_t sgp41_error = sgp41.measureRawSignals(comp_rh, comp_t, sraw_voc, sraw_nox);
 
