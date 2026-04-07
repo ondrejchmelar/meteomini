@@ -51,8 +51,8 @@
 #define SDA_PIN 19                      // I2C SDA pin
 #define SCL_PIN 18                      // I2C SCL pin
 
-#define ADCBpin 0                       // Analog input for battery measurement
-#define bDeviderRatio 1.82274           // Voltage divider ratio for battery measurement
+#define ADC_BATT_PIN 0                       // Analog input for battery measurement
+#define BATT_DIVIDER_RATIO 1.82274           // Voltage divider ratio for battery measurement
 
 // --- Global objects ---
 Adafruit_BME688 bme688;                 // BME688 (temperature, humidity, quality)
@@ -61,7 +61,7 @@ SensirionI2CSgp41 sgp41;                // SGP41 (VOC, NOX)
 VOCGasIndexAlgorithm voc_algorithm;     // VOC index algorithm
 Preferences preferences;                // NVS memory object
 
-String serverName = "http://xxxxx.tmep.cz/?"; // Server URL for data upload
+String server_name = "http://xxxxx.tmep.cz/?"; // Server URL for data upload
 
 // --- Functions for safely loading/saving VOC algorithm state to ESP32 NVS memory ---
 void save_voc_state(VOCGasIndexAlgorithm &voc) {
@@ -104,8 +104,8 @@ void setup() {
   delay(300);
 
   // --- Connect to WiFi via WiFiManager (creates config AP if needed) ---
-  WiFiManager wifiManager;
-  wifiManager.autoConnect("ESP32-Config");
+  WiFiManager wifi_manager;
+  wifi_manager.autoConnect("ESP32-Config");
 
   // --- Initialize I2C bus ---
   Wire.begin(SDA_PIN, SCL_PIN);
@@ -128,9 +128,9 @@ void setup() {
 
   // --- Initialize SGP41 (VOC) and self-test ---
   sgp41.begin(Wire);
-  uint16_t testResult;
-  uint16_t error = sgp41.executeSelfTest(testResult);
-  if (error || testResult != 0xD400) {
+  uint16_t test_result;
+  uint16_t error = sgp41.executeSelfTest(test_result);
+  if (error || test_result != 0xD400) {
     Serial.print("SGP41 self-test failed! Error: ");
     Serial.println(error);
     digitalWrite(POWER_ENABLE_PIN, LOW);
@@ -156,14 +156,14 @@ void setup() {
   float voc_index = 0;
   for (int i = 0; i < 60; i++) {
     // Convert values for compensation (see SGP41 datasheet)
-    uint16_t compRH = (uint16_t)((bme_rh * 65535.0f) / 100.0f);
-    uint16_t compT = (uint16_t)(((bme_temp + 45.0f) * 65535.0f) / 175.0f);
+    uint16_t comp_rh = (uint16_t)((bme_rh * 65535.0f) / 100.0f);
+    uint16_t comp_t = (uint16_t)(((bme_temp + 45.0f) * 65535.0f) / 175.0f);
 
-    uint16_t srawVoc = 0, srawNox = 0;
-    uint16_t sgp41_error = sgp41.measureRawSignals(compRH, compT, srawVoc, srawNox);
+    uint16_t sraw_voc = 0, sraw_nox = 0;
+    uint16_t sgp41_error = sgp41.measureRawSignals(comp_rh, comp_t, sraw_voc, sraw_nox);
 
     if (!sgp41_error) {
-      voc_index = voc_algorithm.process(srawVoc); // Compute VOC index
+      voc_index = voc_algorithm.process(sraw_voc); // Compute VOC index
     } else {
       Serial.print("SGP41 error: ");
       Serial.println(sgp41_error);
@@ -198,7 +198,7 @@ void setup() {
   digitalWrite(POWER_ENABLE_PIN, LOW);
 
   // --- Measure battery voltage via ADC ---
-  float bat_voltage = analogReadMilliVolts(ADCBpin) * bDeviderRatio / 1000.0;
+  float bat_voltage = analogReadMilliVolts(ADC_BATT_PIN) * BATT_DIVIDER_RATIO / 1000.0;
   Serial.print("Battery voltage = ");
   Serial.print(bat_voltage, 2);
   Serial.println(" V");
@@ -212,7 +212,7 @@ void setup() {
   // --- Send data to server via HTTP GET ---
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
-    String serverPath = serverName +
+    String server_path = server_name +
       "temp=" + String(bme_temp, 2) +
       "&hum=" + String(bme_rh, 2) +
       "&co2=" + String(scd_co2, 1) +
@@ -221,18 +221,18 @@ void setup() {
       "&scdrh=" + String(scd_rh, 2) +
       "&v=" + String(bat_voltage, 2) +
       "&rssi=" + String(WiFi.RSSI());
-    Serial.println("Sending: " + serverPath);
+    Serial.println("Sending: " + server_path);
 
-    http.begin(serverPath.c_str());
-    int httpResponseCode = http.GET();
-    if (httpResponseCode > 0) {
+    http.begin(server_path.c_str());
+    int http_response_code = http.GET();
+    if (http_response_code > 0) {
       Serial.print("HTTP Response code: ");
-      Serial.println(httpResponseCode);
+      Serial.println(http_response_code);
       String payload = http.getString();
       Serial.println(payload);
     } else {
       Serial.print("HTTP error: ");
-      Serial.println(httpResponseCode);
+      Serial.println(http_response_code);
     }
     http.end();
   } else {
