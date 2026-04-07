@@ -56,7 +56,7 @@
 
 // --- Global objects ---
 Adafruit_BME680 bme688;                 // BME688 (temperature, humidity, quality)
-SCD4x scd41;                            // SCD41 (CO2)
+SCD4x scd41(SCD4x_SENSOR_SCD41);        // SCD41 (CO2)
 SensirionI2CSgp41 sgp41;                // SGP41 (VOC, NOX)
 VOCGasIndexAlgorithm voc_algorithm;     // VOC index algorithm
 Preferences preferences;                // NVS memory object
@@ -118,7 +118,7 @@ void setup() {
   }
 
   // --- Initialize SCD41 (CO2) ---
-  if (!scd41.begin(false, true)) {
+  if (!scd41.begin(false, true, true)) {
     Serial.println("SCD41 not found!");
     digitalWrite(POWER_ENABLE_PIN, LOW);
     go_to_sleep();
@@ -151,7 +151,10 @@ void setup() {
     Serial.println("BME688 read error! Using default values.");
   }
 
-  // --- SGP41: 60x measurements (1 min, 1 Hz) with BME688 compensation ---
+  // --- SCD41: trigger single shot (takes 5s, will be ready long before SGP41 loop ends) ---
+  scd41.measureSingleShot();
+
+  // --- SGP41: VOC_MEASUREMENT_COUNT measurements (1 min, 1 Hz) with BME688 compensation ---
   float voc_index = 0;
   for (int i = 0; i < 60; i++) {
     // Convert values for compensation (see SGP41 datasheet)
@@ -175,22 +178,14 @@ void setup() {
   // --- Save VOC algorithm state after measurement ---
   save_voc_state(voc_algorithm);
 
-  // --- SCD41: Wait for valid measurement (max 30s) ---
+  // --- SCD41: read single shot result (triggered before SGP41 loop, ready after 5s) ---
   float scd_co2 = NAN, scd_temp = NAN, scd_rh = NAN;
-  bool scd_ok = false;
-  unsigned long start = millis();
-  while (millis() - start < 30000) {
-    if (scd41.readMeasurement()) {
-      scd_co2 = scd41.getCO2();
-      scd_temp = scd41.getTemperature();
-      scd_rh = scd41.getHumidity();
-      scd_ok = true;
-      break;
-    }
-    delay(500);
-  }
-  if (!scd_ok) {
-    Serial.println("SCD41: Failed to get a valid measurement within the time limit.");
+  if (scd41.readMeasurement()) {
+    scd_co2 = scd41.getCO2();
+    scd_temp = scd41.getTemperature();
+    scd_rh = scd41.getHumidity();
+  } else {
+    Serial.println("SCD41: measurement not ready.");
   }
 
   // --- Cut sensor power (POWER_ENABLE_PIN) ---
