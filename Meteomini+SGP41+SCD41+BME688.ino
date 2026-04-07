@@ -61,7 +61,7 @@ SensirionI2CSgp41 sgp41;                // SGP41 (VOC, NOX)
 VOCGasIndexAlgorithm voc_algorithm;     // VOC index algorithm
 Preferences preferences;                // NVS memory object
 
-String server_name = "http://xxxxx.tmep.cz/?"; // Server URL for data upload
+String server_name = "https://api.thingspeak.com/update?api_key=<token>"; // Server URL for data upload
 
 // --- Functions for safely loading/saving VOC algorithm state to ESP32 NVS memory ---
 void save_voc_state(VOCGasIndexAlgorithm &voc) {
@@ -212,14 +212,14 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
     String server_path = server_name +
-      "temp=" + String(bme_temp, 2) +
-      "&hum=" + String(bme_rh, 2) +
-      "&co2=" + String(scd_co2, 1) +
-      "&voc=" + String(voc_index, 1) +
-      "&scdtemp=" + String(scd_temp, 2) +
-      "&scdrh=" + String(scd_rh, 2) +
-      "&v=" + String(bat_voltage, 2) +
-      "&rssi=" + String(WiFi.RSSI());
+      "&field1=" + String(bme_temp, 2) +
+      "&field2=" + String(bme_rh, 2) +
+      "&field3=" + String(scd_co2, 1) +
+      "&field4=" + String(voc_index, 1) +
+      "&field5=" + String(scd_temp, 2) +
+      "&field6=" + String(scd_rh, 2) +
+      "&field7=" + String(bat_voltage, 2) +
+      "&field8=" + String(WiFi.RSSI());
     Serial.println("Sending: " + server_path);
 
     http.begin(server_path.c_str());
