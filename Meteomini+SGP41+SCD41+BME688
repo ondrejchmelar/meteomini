@@ -1,77 +1,77 @@
 /*
-  Meteomini - Senzorická stanice pro ESP32 s čidly SGP41, SCD41 a BME688
+  Meteomini - Sensor station for ESP32 with SGP41, SCD41 and BME688 sensors
   ---------------------------------------------------------
-  Autor: kabelkao, upraveno ondrejchmelar
+  Author: kabelkao, modified by ondrejchmelar
 
-  LOGIKA PROGRAMU:
+  PROGRAM LOGIC:
   ----------------
-  1. Při startu ESP32 povolí napájení senzorů.
-  2. Inicializuje I2C sběrnici a připojená čidla (BME688 - teplota/vlhkost/kvalita, SCD41 - CO2, SGP41 - VOC/NOX).
-  3. Provede test funkčnosti všech čidel (v případě chyby se vypne napájení a ESP32 se uspí).
-  4. Načte uložený stav VOC algoritmu z NVS paměti.
-  5. Změří teplotu, vlhkost a kvalitu přes BME688.
-  6. Provede 60 měření VOC pomocí SGP41 s kompenzací prostředí (dle BME688), VOC index počítá algoritmus.
-  7. Po ukončení měření uloží stav VOC algoritmu zpět do NVS paměti.
-  8. Získá platné měření CO2, teploty a vlhkosti ze SCD41 (max. 30s čekání).
-  9. Vypne napájení senzorů.
-  10. Změří napětí baterie přes dělič a ADC.
-  11. Vše vypíše na sériovou linku.
-  12. Pokud je WiFi připojení aktivní, odešle data na server pomocí HTTP GET dotazu.
-  13. Nakonec ESP32 uspí na 10 minut (deep sleep).
-  14. Po probuzení se celý cyklus opakuje od začátku.
+  1. On startup, ESP32 enables sensor power.
+  2. Initializes the I2C bus and connected sensors (BME688 - temperature/humidity/quality, SCD41 - CO2, SGP41 - VOC/NOX).
+  3. Runs a self-test on all sensors (on error, power is cut and ESP32 goes to sleep).
+  4. Loads the saved VOC algorithm state from NVS memory.
+  5. Measures temperature, humidity and air quality via BME688.
+  6. Performs 60 VOC measurements using SGP41 with environmental compensation (from BME688); VOC index is computed by the algorithm.
+  7. After measurements, saves the VOC algorithm state back to NVS memory.
+  8. Obtains a valid CO2, temperature and humidity reading from SCD41 (up to 30s wait).
+  9. Cuts sensor power.
+  10. Measures battery voltage via a voltage divider and ADC.
+  11. Prints all values to the serial port.
+  12. If WiFi is connected, sends data to the server via an HTTP GET request.
+  13. Finally, puts ESP32 into deep sleep for 10 minutes.
+  14. On wake-up, the whole cycle repeats from the beginning.
 
   HARDWARE:
     - ESP32
-    - BME688 (teplota, vlhkost, kvalita vzduchu)
+    - BME688 (temperature, humidity, air quality)
     - SGP41 (VOC, NOX)
     - SCD41 (CO2)
-    - Napájení z baterie (měření přes dělič napětí)
-    - Vývod pro povolení napájení (POWER_ENABLE_PIN)
-    - I2C sběrnice na pinech 18 (SCL) a 19 (SDA)
-    - Analogový vstup pro měření baterie na pinu 0
+    - Battery powered (measured via voltage divider)
+    - Power enable output (POWER_ENABLE_PIN)
+    - I2C bus on pins 18 (SCL) and 19 (SDA)
+    - Analog input for battery measurement on pin 0
 
   SOFTWARE:
-    - Používá knihovny: Adafruit_BME680, SparkFun_SCD4x_Arduino_Library, SensirionI2CSgp41, VOCGasIndexAlgorithm, WiFiManager, HTTPClient, esp_wifi, esp_sleep, Preferences
-    - Vše probíhá v setup(), loop() je prázdný (běh jednou a pak uspání)
+    - Libraries used: Adafruit_BME680, SparkFun_SCD4x_Arduino_Library, SensirionI2CSgp41, VOCGasIndexAlgorithm, WiFiManager, HTTPClient, esp_wifi, esp_sleep, Preferences
+    - Everything runs in setup(), loop() is empty (runs once then sleeps)
 */
 
-#include <Wire.h>                       // I2C komunikace
-#include <Adafruit_BME680.h>            // BME680/BME688 knihovna
-#include "SparkFun_SCD4x_Arduino_Library.h" // SCD41 knihovna
-#include "SensirionI2CSgp41.h"          // SGP41 knihovna
-#include "VOCGasIndexAlgorithm.h"       // Algoritmus pro VOC index
-#include <WiFiManager.h>                // Snadná konfigurace WiFi přes AP
-#include <HTTPClient.h>                 // HTTP klient pro odesílání dat
-#include <esp_wifi.h>                   // Ovládání WiFi (uspání)
-#include <esp_sleep.h>                  // Uspání čipu
-#include <Preferences.h>                // NVS paměť pro uložení stavu algoritmu
+#include <Wire.h>                       // I2C communication
+#include <Adafruit_BME680.h>            // BME680/BME688 library
+#include "SparkFun_SCD4x_Arduino_Library.h" // SCD41 library
+#include "SensirionI2CSgp41.h"          // SGP41 library
+#include "VOCGasIndexAlgorithm.h"       // VOC index algorithm
+#include <WiFiManager.h>                // Easy WiFi config via AP
+#include <HTTPClient.h>                 // HTTP client for sending data
+#include <esp_wifi.h>                   // WiFi control (sleep)
+#include <esp_sleep.h>                  // Chip sleep
+#include <Preferences.h>                // NVS memory for saving algorithm state
 
-// --- Definice pinů a konstant ---
-#define POWER_ENABLE_PIN 3              // Výstup pro povolení napájení čidel
+// --- Pin and constant definitions ---
+#define POWER_ENABLE_PIN 3              // Output for enabling sensor power
 #define SDA_PIN 19                      // I2C SDA pin
 #define SCL_PIN 18                      // I2C SCL pin
 
-#define ADCBpin 0                       // Analogový vstup pro měření baterie
-#define bDeviderRatio 1.82274           // Poměr děliče napětí pro měření baterie
+#define ADCBpin 0                       // Analog input for battery measurement
+#define bDeviderRatio 1.82274           // Voltage divider ratio for battery measurement
 
-// --- Globální objekty ---
-Adafruit_BME688 bme688;                 // BME688 (teplota, vlhkost, kvalita)
+// --- Global objects ---
+Adafruit_BME688 bme688;                 // BME688 (temperature, humidity, quality)
 SCD4x scd41;                            // SCD41 (CO2)
 SensirionI2CSgp41 sgp41;                // SGP41 (VOC, NOX)
-VOCGasIndexAlgorithm voc_algorithm;     // Algoritmus pro VOC index
-Preferences preferences;                // Objekt pro práci s NVS pamětí
+VOCGasIndexAlgorithm voc_algorithm;     // VOC index algorithm
+Preferences preferences;                // NVS memory object
 
-String serverName = "http://xxxxx.tmep.cz/?"; // URL serveru pro odesílání dat
+String serverName = "http://xxxxx.tmep.cz/?"; // Server URL for data upload
 
-// --- Funkce pro bezpečné načtení/uložení stavu VOC algoritmu do NVS paměti ESP32 ---
+// --- Functions for safely loading/saving VOC algorithm state to ESP32 NVS memory ---
 void save_voc_state(VOCGasIndexAlgorithm &voc) {
   preferences.begin("sgp41voc", false);
   float voc0, voc1;
   voc.get_states(voc0, voc1);
-  preferences.putFloat("voc0", voc0);   // Uložení stavu 0
-  preferences.putFloat("voc1", voc1);   // Uložení stavu 1
+  preferences.putFloat("voc0", voc0);   // Save state 0
+  preferences.putFloat("voc1", voc1);   // Save state 1
   preferences.end();
-  Serial.print("Uložený stav VOC: voc0="); Serial.print(voc0);
+  Serial.print("Saved VOC state: voc0="); Serial.print(voc0);
   Serial.print(" voc1="); Serial.println(voc1);
 }
 
@@ -81,52 +81,52 @@ void load_voc_state(VOCGasIndexAlgorithm &voc) {
   float voc1 = preferences.getFloat("voc1", NAN);
   preferences.end();
   if (!isnan(voc0) && !isnan(voc1) && (voc0 != 0.0f || voc1 != 0.0f)) {
-    voc.set_states(voc0, voc1);         // Obnovení stavu algoritmu
-    Serial.println("Stav VOC algoritmu obnoven z paměti.");
+    voc.set_states(voc0, voc1);         // Restore algorithm state
+    Serial.println("VOC algorithm state restored from memory.");
   } else {
-    Serial.println("VOC algoritmus začíná s výchozím stavem.");
+    Serial.println("VOC algorithm starting with default state.");
   }
 }
 
-// --- Funkce pro uspání čipu do deep sleep na 10 minut ---
+// --- Function to put the chip into deep sleep for 10 minutes ---
 void go_to_sleep() {
-  Serial.println("Jdu spát na 10 minut...");
-  esp_wifi_stop();                      // Vypnutí WiFi pro úsporu
-  esp_deep_sleep(10 * 60 * 1000000ULL); // 10 minut v mikrosekundách
+  Serial.println("Going to sleep for 10 minutes...");
+  esp_wifi_stop();                      // Turn off WiFi to save power
+  esp_deep_sleep(10 * 60 * 1000000ULL); // 10 minutes in microseconds
 }
 
-// --- Hlavní program ---
+// --- Main program ---
 void setup() {
-  pinMode(POWER_ENABLE_PIN, OUTPUT);    // Nastavení výstupního pinu pro napájení čidel
-  digitalWrite(POWER_ENABLE_PIN, HIGH); // Zapnutí napájení čidel
+  pinMode(POWER_ENABLE_PIN, OUTPUT);    // Set output pin for sensor power
+  digitalWrite(POWER_ENABLE_PIN, HIGH); // Enable sensor power
 
   Serial.begin(115200);
   delay(300);
 
-  // --- Připojení k WiFi přes WiFiManager (případně vytvoří AP pro konfiguraci) ---
+  // --- Connect to WiFi via WiFiManager (creates config AP if needed) ---
   WiFiManager wifiManager;
   wifiManager.autoConnect("ESP32-Config");
 
-  // --- Inicializace I2C sběrnice ---
+  // --- Initialize I2C bus ---
   Wire.begin(SDA_PIN, SCL_PIN);
 
-  // --- Inicializace BME688 (teplota, vlhkost, kvalita) ---
+  // --- Initialize BME688 (temperature, humidity, quality) ---
   if (!bme688.begin()) {
-    Serial.println("BME688 nenalezen!");
+    Serial.println("BME688 not found!");
     digitalWrite(POWER_ENABLE_PIN, LOW);
     go_to_sleep();
   }
 
-  // --- Inicializace SCD41 (CO2) ---
+  // --- Initialize SCD41 (CO2) ---
   if (!scd41.begin(false, true)) {
-    Serial.println("SCD41 nenalezen!");
+    Serial.println("SCD41 not found!");
     digitalWrite(POWER_ENABLE_PIN, LOW);
     go_to_sleep();
   }
-  scd41.startLowPowerPeriodicMeasurement(); // Spuštění měření v SCD41
-  delay(5000); // Požadováno pro první validní měření
+  scd41.startLowPowerPeriodicMeasurement(); // Start measurement in SCD41
+  delay(5000); // Required for first valid measurement
 
-  // --- Inicializace SGP41 (VOC) a self-test ---
+  // --- Initialize SGP41 (VOC) and self-test ---
   sgp41.begin(Wire);
   uint16_t testResult;
   uint16_t error = sgp41.executeSelfTest(testResult);
@@ -137,10 +137,10 @@ void setup() {
     go_to_sleep();
   }
 
-  // --- Načtení stavu VOC algoritmu z NVS paměti ---
+  // --- Load VOC algorithm state from NVS memory ---
   load_voc_state(voc_algorithm);
 
-  // --- Měření teploty a vlhkosti BME688 ---
+  // --- Measure temperature and humidity with BME688 ---
   sensors_event_t humidity, temp;
   float bme_temp = NAN, bme_rh = NAN;
   if (bme688.getEvent(&humidity, &temp)) {
@@ -149,13 +149,13 @@ void setup() {
   } else {
     bme_temp = 25.0;
     bme_rh = 50.0;
-    Serial.println("BME688 chyba čtení! Používám default hodnoty.");
+    Serial.println("BME688 read error! Using default values.");
   }
 
-  // --- SGP41: 60× měření (1 min, 1 Hz) s kompenzací BME688 ---
+  // --- SGP41: 60x measurements (1 min, 1 Hz) with BME688 compensation ---
   float voc_index = 0;
   for (int i = 0; i < 60; i++) {
-    // Přepočet hodnot pro kompenzaci (viz datasheet SGP41)
+    // Convert values for compensation (see SGP41 datasheet)
     uint16_t compRH = (uint16_t)((bme_rh * 65535.0f) / 100.0f);
     uint16_t compT = (uint16_t)(((bme_temp + 45.0f) * 65535.0f) / 175.0f);
 
@@ -163,20 +163,20 @@ void setup() {
     uint16_t sgp41_error = sgp41.measureRawSignals(compRH, compT, srawVoc, srawNox);
 
     if (!sgp41_error) {
-      voc_index = voc_algorithm.process(srawVoc); // Výpočet VOC indexu
+      voc_index = voc_algorithm.process(srawVoc); // Compute VOC index
     } else {
       Serial.print("SGP41 error: ");
       Serial.println(sgp41_error);
     }
     Serial.print("SGP41 ["); Serial.print(i+1); Serial.print("/60]: VOC="); Serial.println(voc_index, 1);
 
-    delay(1000); // 1 Hz měření
+    delay(1000); // 1 Hz measurement
   }
 
-  // --- Uložení stavu VOC algoritmu po měření ---
+  // --- Save VOC algorithm state after measurement ---
   save_voc_state(voc_algorithm);
 
-  // --- SCD41: Čekání na validní měření (max 30s) ---
+  // --- SCD41: Wait for valid measurement (max 30s) ---
   float scd_co2 = NAN, scd_temp = NAN, scd_rh = NAN;
   bool scd_ok = false;
   unsigned long start = millis();
@@ -191,25 +191,25 @@ void setup() {
     delay(500);
   }
   if (!scd_ok) {
-    Serial.println("SCD41: Validní měření se nepodařilo získat v časovém limitu.");
+    Serial.println("SCD41: Failed to get a valid measurement within the time limit.");
   }
 
-  // --- Vypnutí napájení čidel (POWER_ENABLE_PIN) ---
+  // --- Cut sensor power (POWER_ENABLE_PIN) ---
   digitalWrite(POWER_ENABLE_PIN, LOW);
 
-  // --- Měření napětí baterie přes ADC ---
+  // --- Measure battery voltage via ADC ---
   float bat_voltage = analogReadMilliVolts(ADCBpin) * bDeviderRatio / 1000.0;
-  Serial.print("Napeti akumulatoru = ");
+  Serial.print("Battery voltage = ");
   Serial.print(bat_voltage, 2);
   Serial.println(" V");
 
-  // --- Výpis naměřených hodnot na sériovou linku ---
-  Serial.println("Naměřené hodnoty:");
+  // --- Print measured values to serial port ---
+  Serial.println("Measured values:");
   Serial.print("BME688: T="); Serial.print(bme_temp, 2); Serial.print("°C, RH="); Serial.print(bme_rh, 2); Serial.println("%");
   Serial.print("SGP41: VOC="); Serial.println(voc_index, 1);
   Serial.print("SCD41: CO2="); Serial.print(scd_co2, 1); Serial.print("ppm, T="); Serial.print(scd_temp, 2); Serial.print("°C, RH="); Serial.print(scd_rh, 2); Serial.println("%");
 
-  // --- Odeslání dat na server přes HTTP GET ---
+  // --- Send data to server via HTTP GET ---
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
     String serverPath = serverName +
@@ -221,7 +221,7 @@ void setup() {
       "&scdrh=" + String(scd_rh, 2) +
       "&v=" + String(bat_voltage, 2) +
       "&rssi=" + String(WiFi.RSSI());
-    Serial.println("Odesílám: " + serverPath);
+    Serial.println("Sending: " + serverPath);
 
     http.begin(serverPath.c_str());
     int httpResponseCode = http.GET();
@@ -239,10 +239,10 @@ void setup() {
     Serial.println("WiFi not connected, data not sent.");
   }
 
-  // --- Uspání čipu (deep sleep na 10 minut) ---
+  // --- Put chip to sleep (deep sleep for 10 minutes) ---
   go_to_sleep();
 }
 
 void loop() {
-  // Nepoužito, vše je v setup()
+  // Unused, everything is in setup()
 }
