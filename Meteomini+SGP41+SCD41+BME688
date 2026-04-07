@@ -55,7 +55,7 @@
 #define BATT_DIVIDER_RATIO 1.82274           // Voltage divider ratio for battery measurement
 
 // --- Global objects ---
-Adafruit_BME688 bme688;                 // BME688 (temperature, humidity, quality)
+Adafruit_BME680 bme688;                 // BME688 (temperature, humidity, quality)
 SCD4x scd41;                            // SCD41 (CO2)
 SensirionI2CSgp41 sgp41;                // SGP41 (VOC, NOX)
 VOCGasIndexAlgorithm voc_algorithm;     // VOC index algorithm
@@ -141,11 +141,10 @@ void setup() {
   load_voc_state(voc_algorithm);
 
   // --- Measure temperature and humidity with BME688 ---
-  sensors_event_t humidity, temp;
   float bme_temp = NAN, bme_rh = NAN;
-  if (bme688.getEvent(&humidity, &temp)) {
-    bme_temp = temp.temperature;
-    bme_rh = humidity.relative_humidity;
+  if (bme688.performReading()) {
+    bme_temp = bme688.temperature;
+    bme_rh = bme688.humidity;
   } else {
     bme_temp = 25.0;
     bme_rh = 50.0;
