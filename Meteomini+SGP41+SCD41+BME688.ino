@@ -46,6 +46,13 @@
 #include <esp_sleep.h>                  // Chip sleep
 #include <Preferences.h>                // NVS memory for saving algorithm state
 
+// --- Set to true to run CO2 forced recalibration instead of normal measurement ---
+// Place the sensor in fresh outdoor air, flash with this set to true, wait 3 minutes, then set back to false.
+#define FORCE_CALIBRATE false
+#define FORCE_CALIBRATE_REFERENCE_PPM 420  // Current outdoor CO2 level (~420 ppm)
+
+#define VOC_MEASUREMENT_COUNT 20           // Number of SGP41 measurements (1 Hz); 60 = 1 min recommended
+
 // --- Pin and constant definitions ---
 #define POWER_ENABLE_PIN 4              // Output for enabling sensor power
 #define SDA_PIN 19                      // I2C SDA pin
@@ -123,8 +130,23 @@ void setup() {
     digitalWrite(POWER_ENABLE_PIN, LOW);
     go_to_sleep();
   }
-  scd41.startLowPowerPeriodicMeasurement(); // Start measurement in SCD41
-  delay(5000); // Required for first valid measurement
+
+#if FORCE_CALIBRATE
+  // --- Forced CO2 recalibration (one-time, run in fresh outdoor air) ---
+  Serial.println("Calibration mode: starting periodic measurement for 3 minutes...");
+  scd41.startPeriodicMeasurement();
+  delay(180000); // 3 minutes required before FRC per datasheet
+  scd41.stopPeriodicMeasurement();
+  delay(500);
+  float correction;
+  if (scd41.performForcedRecalibration(FORCE_CALIBRATE_REFERENCE_PPM, &correction)) {
+    Serial.print("FRC correction: "); Serial.print(correction); Serial.println(" ppm");
+  } else {
+    Serial.println("FRC failed!");
+  }
+  Serial.println("Calibration done. Set FORCE_CALIBRATE to false and reflash.");
+  while (true) delay(1000); // halt
+#endif
 
   // --- Initialize SGP41 (VOC) and self-test ---
   sgp41.begin(Wire);
@@ -156,7 +178,7 @@ void setup() {
 
   // --- SGP41: VOC_MEASUREMENT_COUNT measurements (1 min, 1 Hz) with BME688 compensation ---
   float voc_index = 0;
-  for (int i = 0; i < 60; i++) {
+  for (int i = 0; i < VOC_MEASUREMENT_COUNT; i++) {
     // Convert values for compensation (see SGP41 datasheet)
     uint16_t comp_rh = (uint16_t)((bme_rh * 65535.0f) / 100.0f);
     uint16_t comp_t = (uint16_t)(((bme_temp + 45.0f) * 65535.0f) / 175.0f);
@@ -170,7 +192,7 @@ void setup() {
       Serial.print("SGP41 error: ");
       Serial.println(sgp41_error);
     }
-    Serial.print("SGP41 ["); Serial.print(i+1); Serial.print("/60]: VOC="); Serial.println(voc_index, 1);
+    Serial.print("SGP41 ["); Serial.print(i+1); Serial.print("/"); Serial.print(VOC_MEASUREMENT_COUNT); Serial.print("]: VOC="); Serial.println(voc_index, 1);
 
     delay(1000); // 1 Hz measurement
   }
