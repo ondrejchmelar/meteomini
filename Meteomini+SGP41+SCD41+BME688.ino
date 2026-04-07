@@ -47,7 +47,7 @@
 #include <Preferences.h>                // NVS memory for saving algorithm state
 
 // --- Pin and constant definitions ---
-#define POWER_ENABLE_PIN 3              // Output for enabling sensor power
+#define POWER_ENABLE_PIN 4              // Output for enabling sensor power
 #define SDA_PIN 19                      // I2C SDA pin
 #define SCL_PIN 18                      // I2C SCL pin
 
