@@ -59,7 +59,7 @@ String server_name = "http://YOUR_SUBDOMAIN.tmep.cz/?";
 
 ## Compiling and Uploading
 
-1. In Arduino IDE, open `Meteomini+SGP41+SCD41+BME688` (rename it to `Meteomini.ino` first if Arduino IDE refuses to open it).
+1. In Arduino IDE, open `Meteomini_SGP41_SCD41_BME688.ino`
 2. Select your board: **Tools → Board → ESP32 Arduino → ESP32 Dev Module** (or whichever variant you have).
 3. Select the port: **Tools → Port** — pick the COM/tty port that appears when you plug in the board.
 4. Click **Upload** (the right-arrow button).
